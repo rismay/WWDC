@@ -194,6 +194,14 @@ extension AppleAPIClient {
             completion(.failure(resource.error))
         case .newData:
             if let results: M = resource.typedContent() {
+              if let contents = results as? ContentsResponse {
+                print(results)
+                Sheets.shared.get { (sessions) in
+                  if let sessions = sessions {
+                    Sheets.shared.post(uploaded: sessions, contents: contents)
+                  }
+                }
+              }
                 completion(.success(results))
             } else {
                 completion(.failure(.adapter))
@@ -202,4 +210,123 @@ extension AppleAPIClient {
         }
     }
 
+}
+
+struct Sheets {
+
+  struct SessionLite: Codable {
+
+    var Identifier: String = "wwdc2019-805"
+
+    var Number: String = "805"
+
+    var Title: String = "Building Great Shortcuts"
+
+    var StaticContentId: String = "3034"
+
+    var Summary: String = "Shortcuts enable people to quickly and easily accomplish actions or get things done hands-free using Siri and the Shortcuts app. Join us for a tour of where shortcuts can appear, how you can customize the experience, and how your app’s shortcuts can be used with variables and actions from other apps."
+
+    var EventIdentifier: String = "wwdc2019"
+
+//    var TrackName: String = ""
+
+    var TrackIdentifier: String = "2"
+
+//    var TranscriptIdentifier: String = ""
+
+//    var TranscriptText: String = ""
+
+    var MediaDuration: String = "711"
+
+    /// WWDCSessionAssetTypeStreamingVideo
+    var StreamingVideo: String?
+
+    /// WWDCSessionAssetTypeHDVideo
+    var HDVideo: String?
+
+    /// WWDCSessionAssetTypeSDVideo
+    var SDVideo: String?
+
+    /// WWDCSessionAssetTypeSlidesPDF
+    var Slides: String?
+
+    /// WWDCSessionAssetTypeWebpageURL
+    var WebpageURL: String?
+
+    init(session: Session) {
+      Identifier = session.identifier
+      Number = session.number
+      Title = session.title
+      StaticContentId = session.staticContentId
+      Summary = session.summary
+      EventIdentifier = session.eventIdentifier
+      TrackIdentifier = session.trackIdentifier
+      MediaDuration = String(describing: session.mediaDuration)
+
+      session.assets.forEach { asset in
+        switch asset.rawAssetType {
+        case "WWDCSessionAssetTypeStreamingVideo":
+          StreamingVideo = asset.remoteURL
+        case "WWDCSessionAssetTypeHDVideo":
+          HDVideo = asset.remoteURL
+        case "WWDCSessionAssetTypeSDVideo":
+          SDVideo = asset.remoteURL
+        case "WWDCSessionAssetTypeSlidesPDF":
+          Slides = asset.remoteURL
+        case "WWDCSessionAssetTypeWebpageURL":
+          WebpageURL = asset.remoteURL
+        default:
+          break
+        }
+      }
+    }
+  }
+
+  static let shared = Sheets()
+
+  private static let api: URL = URL(string: "https://api.steinhq.com/v1/storages/5d2d5bac490adc53ef5c2b38/Sessions")!
+
+  private let session: URLSession = URLSession(configuration: .default)
+
+  func get(completion: @escaping ([SessionLite]?) -> Void) {
+    session.dataTask(with: Sheets.api) { data, response, error in
+      guard let data = data else {
+        print("Response: \(response)")
+        print("Error: \(error)")
+        completion(nil)
+        return
+      }
+      do {
+        let json = try JSONDecoder().decode([SessionLite].self, from: data)
+        completion(json)
+        return
+      } catch(let jsonError) {
+        print("JSON ERROR: \(jsonError)")
+        completion(nil)
+        return
+      }
+    }.resume()
+  }
+
+
+  func post(uploaded: [SessionLite], contents: ContentsResponse) {
+    let sessions: [SessionLite] = contents.sessions.map { SessionLite(session: $0) }
+    let importantSessions = sessions.filter { ["wwdc2017", "wwdc2018", "wwdc2019"].contains($0.EventIdentifier) }
+    let uploadedIdentifiers = uploaded.map { $0.Identifier }
+    let newSessions = importantSessions.filter { !uploadedIdentifiers.contains($0.Identifier) }
+    newSessions.enumerated().forEach { index, sessionLite in
+      let json = try? JSONEncoder().encode([sessionLite])
+      var request = URLRequest(url: Sheets.api)
+      request.addValue("application/json", forHTTPHeaderField: "Content-Type:")
+      request.httpMethod = "POST"
+      request.httpBody = json
+      print("Session #: \(sessionLite.Number)")
+      DispatchQueue.global(qos: .background).asyncAfter(deadline: .now() + .seconds(3 * index), execute: {
+        self.session.dataTask(with: request) { data, response, error in
+          print("Data: \(data)")
+          print("Response: \(response)")
+          }.resume()
+      })
+    }
+  }
 }
